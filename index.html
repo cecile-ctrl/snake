@@ -50,21 +50,23 @@
     }
 
     #map { height: 100vh; display: none; }
+
+    /* ✅ Scorebox rechtsonder vast */
     #score {
-      position: absolute;
-      top: 10px;
-      left: 10px;
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
       background: white;
       padding: 8px 12px;
       border-radius: 8px;
       box-shadow: 0 0 5px rgba(0,0,0,0.3);
       font-size: 16px;
       font-weight: bold;
-      display: none;
-      z-index: 500;
+      z-index: 1000;
+      display: none; /* pas zichtbaar na start */
     }
 
-    /* 🔵 Blauwe pin zoals in Google Maps */
+    /* 🔵 Blauwe pin zoals Google Maps */
     .blue-pin {
       width: 24px;
       height: 24px;
@@ -251,7 +253,7 @@
 
           if (foodCoords) {
             const d = getDistance(latitude, longitude, foodCoords[0], foodCoords[1]);
-            if (d < 20) {
+            if (d < 10) {
               score++;
               updateScore();
               maxPathLength += 500;
@@ -293,4 +295,5 @@
   </script>
 </body>
 </html>
+
 
