@@ -5,40 +5,163 @@
   <title>Snake in Real Life</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
-    #map { height: 100vh; }
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      font-family: sans-serif;
+    }
+
+    #startScreen {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(135deg, #4CAF50, #2E7D32);
+      flex-direction: column;
+      color: white;
+    }
+
+    #startScreen h1 {
+      font-size: 2em;
+      margin-bottom: 20px;
+    }
+
+    #startBtn {
+      padding: 12px 24px;
+      font-size: 18px;
+      background: #fff;
+      color: #2E7D32;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    #startBtn:hover {
+      background: #f0f0f0;
+    }
+
+    #map { 
+      height: 100vh; 
+      display: none; /* verborgen tot start */
+    }
+
+    #score {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 8px 12px;
+      border-radius: 8px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+      font-size: 16px;
+      font-weight: bold;
+      display: none; /* verborgen tot start */
+    }
   </style>
 </head>
 <body>
+  <!-- Startscherm -->
+  <div id="startScreen">
+    <h1>Snake in Real Life</h1>
+    <button id="startBtn">Start spel</button>
+  </div>
+
+  <!-- Spel -->
   <div id="map"></div>
+  <div id="score">Score: 0</div>
+
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    // Init kaart
-    const map = L.map('map').setView([52.3702, 4.8952], 15); // Amsterdam als voorbeeld
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19
-    }).addTo(map);
+    let map, pathCoords = [], pathLine = null, foodMarker = null, foodCoords = null;
+    let roads = [], center = null, score = 0, maxPathLength = 500;
+    const stepTime = 5000;
 
-    let pathCoords = [];         // Opslag voor het gelopen pad
-    let pathLine = null;         // Polyline van het pad
-    let foodMarker = null;       // Huidige "food"
-    const stepTime = 5000;       // Elke 5 seconden nieuwe locatie
-    const areaBounds = L.latLngBounds([52.368, 4.892], [52.372, 4.898]); // Beperkt gebied
-
-    // Functie om "food" te genereren
-    function generateFood() {
-      const bounds = areaBounds;
-      const lat = bounds.getSouth() + Math.random() * (bounds.getNorth() - bounds.getSouth());
-      const lng = bounds.getWest() + Math.random() * (bounds.getEast() - bounds.getWest());
-      if (foodMarker) map.removeLayer(foodMarker);
-      foodMarker = L.marker([lat, lng], { title: "Food" }).addTo(map);
+    // ---- Score bijwerken ----
+    function updateScore() {
+      document.getElementById("score").innerText = "Score: " + score;
     }
 
-    // Check of nieuw segment kruist met bestaand pad
+    // ---- OSM wegen laden ----
+    async function loadRoads(center, radius=2000) {
+      const query = `
+        [out:json];
+        way["highway"]["highway"!="motorway"]["highway"!="trunk"]
+          (around:${radius},${center[0]},${center[1]});
+        out geom;
+      `;
+      const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(query);
+      const res = await fetch(url);
+      const data = await res.json();
+      roads = data.elements;
+    }
+
+    function randomPointOnRoad() {
+      if (roads.length === 0) return null;
+      const road = roads[Math.floor(Math.random() * roads.length)];
+      const nodes = road.geometry;
+      if (nodes.length < 2) return null;
+      const idx = Math.floor(Math.random() * (nodes.length - 1));
+      const a = nodes[idx], b = nodes[idx+1];
+      const t = Math.random();
+      return [
+        a.lat + t * (b.lat - a.lat),
+        a.lon + t * (b.lon - a.lon)
+      ];
+    }
+
+    function generateFood() {
+      const point = randomPointOnRoad();
+      if (!point) return;
+
+      if (foodMarker) map.removeLayer(foodMarker);
+
+      const appleIcon = L.divIcon({
+        html: "🍎",
+        className: "",
+        iconSize: [24, 24]
+      });
+
+      foodMarker = L.marker(point, { icon: appleIcon }).addTo(map);
+      foodCoords = point;
+    }
+
+    function getDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371e3;
+      const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
+      const Δφ = (lat2-lat1) * Math.PI/180;
+      const Δλ = (lon2-lon1) * Math.PI/180;
+
+      const a = Math.sin(Δφ/2)**2 +
+                Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
+      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+    }
+
+    function getPathLength(coords) {
+      let length = 0;
+      for (let i = 1; i < coords.length; i++) {
+        length += getDistance(
+          coords[i-1][0], coords[i-1][1],
+          coords[i][0], coords[i][1]
+        );
+      }
+      return length;
+    }
+
+    function trimPath() {
+      let length = getPathLength(pathCoords);
+      while (length > maxPathLength && pathCoords.length > 1) {
+        pathCoords.shift();
+        length = getPathLength(pathCoords);
+      }
+    }
+
     function intersectsPath(newPoint) {
       if (pathCoords.length < 2) return false;
-      const last = pathCoords[pathCoords.length - 1];
       for (let i = 0; i < pathCoords.length - 2; i++) {
-        // simpele check: zelfde punt (voor echt kruisen heb je line intersection lib nodig)
         if (pathCoords[i][0] === newPoint[0] && pathCoords[i][1] === newPoint[1]) {
           return true;
         }
@@ -46,25 +169,55 @@
       return false;
     }
 
-    // Locatie ophalen en pad bijwerken
     function trackLocation() {
-      navigator.geolocation.getCurrentPosition(pos => {
+      navigator.geolocation.getCurrentPosition(async pos => {
         const { latitude, longitude } = pos.coords;
         const newPoint = [latitude, longitude];
+
+        if (!center) {
+          center = newPoint;
+          await loadRoads(center, 2000);
+          generateFood();
+        }
+
         if (!intersectsPath(newPoint)) {
           pathCoords.push(newPoint);
+          trimPath();
+
           if (pathLine) map.removeLayer(pathLine);
           pathLine = L.polyline(pathCoords, { color: 'green' }).addTo(map);
           map.setView(newPoint, 17);
+
+          if (foodCoords) {
+            const d = getDistance(latitude, longitude, foodCoords[0], foodCoords[1]);
+            if (d < 20) { // appel gepakt
+              score++;
+              updateScore();
+              maxPathLength += 500;
+              generateFood();
+            }
+          }
         } else {
           alert("Game Over! Je hebt je eigen pad geraakt.");
         }
       });
     }
 
-    // Start game loop
-    generateFood();
-    setInterval(trackLocation, stepTime);
+    // ---- Startknop functionaliteit ----
+    document.getElementById("startBtn").addEventListener("click", () => {
+      document.getElementById("startScreen").style.display = "none";
+      document.getElementById("map").style.display = "block";
+      document.getElementById("score").style.display = "block";
+
+      // init map pas bij start
+      map = L.map('map').setView([52.3702, 4.8952], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+      }).addTo(map);
+
+      // locatie bijhouden starten
+      setInterval(trackLocation, stepTime);
+    });
   </script>
 </body>
 </html>
