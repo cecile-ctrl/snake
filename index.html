@@ -13,7 +13,7 @@
       font-family: sans-serif;
     }
 
-    #startScreen {
+    #startScreen, #gameOverScreen {
       display: flex;
       justify-content: center;
       align-items: center;
@@ -22,14 +22,18 @@
       background: linear-gradient(135deg, #4CAF50, #2E7D32);
       flex-direction: column;
       color: white;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 999;
     }
 
-    #startScreen h1 {
+    #startScreen h1, #gameOverScreen h1 {
       font-size: 2em;
       margin-bottom: 20px;
     }
 
-    #startBtn {
+    button {
       padding: 12px 24px;
       font-size: 18px;
       background: #fff;
@@ -38,17 +42,14 @@
       border-radius: 8px;
       cursor: pointer;
       font-weight: bold;
+      margin-top: 10px;
     }
 
-    #startBtn:hover {
+    button:hover {
       background: #f0f0f0;
     }
 
-    #map { 
-      height: 100vh; 
-      display: none; /* verborgen tot start */
-    }
-
+    #map { height: 100vh; display: none; }
     #score {
       position: absolute;
       top: 10px;
@@ -59,7 +60,31 @@
       box-shadow: 0 0 5px rgba(0,0,0,0.3);
       font-size: 16px;
       font-weight: bold;
-      display: none; /* verborgen tot start */
+      display: none;
+      z-index: 500;
+    }
+
+    /* 🔵 Blauwe pin zoals in Google Maps */
+    .blue-pin {
+      width: 24px;
+      height: 24px;
+      border-radius: 50% 50% 50% 0;
+      background: #4285F4;
+      position: absolute;
+      transform: rotate(-45deg);
+      left: 50%;
+      top: 50%;
+      margin: -12px 0 0 -12px;
+      border: 2px solid white;
+    }
+    .blue-pin::after {
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin: 7px 0 0 7px;
+      background: white;
+      position: absolute;
+      border-radius: 50%;
     }
   </style>
 </head>
@@ -70,22 +95,43 @@
     <button id="startBtn">Start spel</button>
   </div>
 
+  <!-- Game Over scherm -->
+  <div id="gameOverScreen" style="display:none;">
+    <h1>Game Over!</h1>
+    <p id="finalScore">Score: 0</p>
+    <button id="restartBtn">Opnieuw starten</button>
+  </div>
+
   <!-- Spel -->
   <div id="map"></div>
   <div id="score">Score: 0</div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    let map, pathCoords = [], pathLine = null, foodMarker = null, foodCoords = null;
-    let roads = [], center = null, score = 0, maxPathLength = 500;
+    let map, pathCoords, pathLine, foodMarker, foodCoords, roads, center, score, maxPathLength;
+    let playerMarker = null;
+    let playerCircle = null;
     const stepTime = 5000;
+    let gameInterval = null;
+
+    function resetGame() {
+      pathCoords = [];
+      pathLine = null;
+      foodMarker = null;
+      foodCoords = null;
+      roads = [];
+      center = null;
+      score = 0;
+      maxPathLength = 500;
+      updateScore();
+    }
 
     // ---- Score bijwerken ----
     function updateScore() {
       document.getElementById("score").innerText = "Score: " + score;
     }
 
-    // ---- OSM wegen laden ----
+    // ---- Wegen laden ----
     async function loadRoads(center, radius=2000) {
       const query = `
         [out:json];
@@ -93,10 +139,15 @@
           (around:${radius},${center[0]},${center[1]});
         out geom;
       `;
-      const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(query);
-      const res = await fetch(url);
-      const data = await res.json();
-      roads = data.elements;
+      const url = "https://overpass.kumi.systems/api/interpreter?data=" + encodeURIComponent(query);
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        roads = data.elements;
+      } catch (err) {
+        console.warn("Kon geen wegen laden:", err);
+        roads = [];
+      }
     }
 
     function randomPointOnRoad() {
@@ -107,24 +158,24 @@
       const idx = Math.floor(Math.random() * (nodes.length - 1));
       const a = nodes[idx], b = nodes[idx+1];
       const t = Math.random();
-      return [
-        a.lat + t * (b.lat - a.lat),
-        a.lon + t * (b.lon - a.lon)
-      ];
+      return [a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon)];
+    }
+
+    function randomPointFallback() {
+      if (!center) return null;
+      const lat = center[0] + (Math.random() - 0.5) * 0.018;
+      const lon = center[1] + (Math.random() - 0.5) * 0.028;
+      return [lat, lon];
     }
 
     function generateFood() {
-      const point = randomPointOnRoad();
+      let point = randomPointOnRoad();
+      if (!point) point = randomPointFallback();
       if (!point) return;
 
       if (foodMarker) map.removeLayer(foodMarker);
 
-      const appleIcon = L.divIcon({
-        html: "🍎",
-        className: "",
-        iconSize: [24, 24]
-      });
-
+      const appleIcon = L.divIcon({ html: "🍎", className: "", iconSize: [24, 24] });
       foodMarker = L.marker(point, { icon: appleIcon }).addTo(map);
       foodCoords = point;
     }
@@ -134,19 +185,14 @@
       const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
       const Δφ = (lat2-lat1) * Math.PI/180;
       const Δλ = (lon2-lon1) * Math.PI/180;
-
-      const a = Math.sin(Δφ/2)**2 +
-                Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
+      const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
       return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
     }
 
     function getPathLength(coords) {
       let length = 0;
       for (let i = 1; i < coords.length; i++) {
-        length += getDistance(
-          coords[i-1][0], coords[i-1][1],
-          coords[i][0], coords[i][1]
-        );
+        length += getDistance(coords[i-1][0], coords[i-1][1], coords[i][0], coords[i][1]);
       }
       return length;
     }
@@ -169,9 +215,15 @@
       return false;
     }
 
+    function gameOver() {
+      clearInterval(gameInterval);
+      document.getElementById("finalScore").innerText = "Score: " + score;
+      document.getElementById("gameOverScreen").style.display = "flex";
+    }
+
     function trackLocation() {
       navigator.geolocation.getCurrentPosition(async pos => {
-        const { latitude, longitude } = pos.coords;
+        const { latitude, longitude, accuracy } = pos.coords;
         const newPoint = [latitude, longitude];
 
         if (!center) {
@@ -180,6 +232,15 @@
           generateFood();
         }
 
+        // ---- Eigen locatie marker (blauwe pin + cirkel nauwkeurigheid) ----
+        if (playerMarker) map.removeLayer(playerMarker);
+        if (playerCircle) map.removeLayer(playerCircle);
+
+        const bluePinIcon = L.divIcon({ className: "blue-pin", iconSize: [24, 24] });
+        playerMarker = L.marker(newPoint, { icon: bluePinIcon }).addTo(map);
+        playerCircle = L.circle(newPoint, { radius: accuracy, color: "blue", opacity: 0.3 }).addTo(map);
+
+        // ---- Pad tekenen ----
         if (!intersectsPath(newPoint)) {
           pathCoords.push(newPoint);
           trimPath();
@@ -190,7 +251,7 @@
 
           if (foodCoords) {
             const d = getDistance(latitude, longitude, foodCoords[0], foodCoords[1]);
-            if (d < 20) { // appel gepakt
+            if (d < 20) {
               score++;
               updateScore();
               maxPathLength += 500;
@@ -198,26 +259,38 @@
             }
           }
         } else {
-          alert("Game Over! Je hebt je eigen pad geraakt.");
+          gameOver();
         }
+      }, err => {
+        console.error("GPS fout:", err);
       });
     }
 
-    // ---- Startknop functionaliteit ----
+    // ---- Startknop ----
     document.getElementById("startBtn").addEventListener("click", () => {
       document.getElementById("startScreen").style.display = "none";
       document.getElementById("map").style.display = "block";
       document.getElementById("score").style.display = "block";
 
-      // init map pas bij start
       map = L.map('map').setView([52.3702, 4.8952], 15);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19
-      }).addTo(map);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-      // locatie bijhouden starten
-      setInterval(trackLocation, stepTime);
+      resetGame();
+      gameInterval = setInterval(trackLocation, stepTime);
+    });
+
+    // ---- Restartknop ----
+    document.getElementById("restartBtn").addEventListener("click", () => {
+      document.getElementById("gameOverScreen").style.display = "none";
+      resetGame();
+      if (map) {
+        map.eachLayer(layer => { 
+          if (layer instanceof L.Polyline || layer instanceof L.Marker || layer instanceof L.Circle) map.removeLayer(layer); 
+        });
+      }
+      gameInterval = setInterval(trackLocation, stepTime);
     });
   </script>
 </body>
 </html>
+
