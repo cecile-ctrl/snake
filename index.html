@@ -134,7 +134,7 @@
     }
 
     // ---- Wegen laden ----
-    async function loadRoads(center, radius=2000) {
+    async function loadRoads(center, radius=500) {
       const query = `
         [out:json];
         way["highway"]["highway"!="motorway"]["highway"!="trunk"]
@@ -295,5 +295,6 @@
   </script>
 </body>
 </html>
+
 
 
