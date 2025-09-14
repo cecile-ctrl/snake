@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Snake in Real Life</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    #map { height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    // Init kaart
+    const map = L.map('map').setView([52.3702, 4.8952], 15); // Amsterdam als voorbeeld
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(map);
+
+    let pathCoords = [];         // Opslag voor het gelopen pad
+    let pathLine = null;         // Polyline van het pad
+    let foodMarker = null;       // Huidige "food"
+    const stepTime = 5000;       // Elke 5 seconden nieuwe locatie
+    const areaBounds = L.latLngBounds([52.368, 4.892], [52.372, 4.898]); // Beperkt gebied
+
+    // Functie om "food" te genereren
+    function generateFood() {
+      const bounds = areaBounds;
+      const lat = bounds.getSouth() + Math.random() * (bounds.getNorth() - bounds.getSouth());
+      const lng = bounds.getWest() + Math.random() * (bounds.getEast() - bounds.getWest());
+      if (foodMarker) map.removeLayer(foodMarker);
+      foodMarker = L.marker([lat, lng], { title: "Food" }).addTo(map);
+    }
+
+    // Check of nieuw segment kruist met bestaand pad
+    function intersectsPath(newPoint) {
+      if (pathCoords.length < 2) return false;
+      const last = pathCoords[pathCoords.length - 1];
+      for (let i = 0; i < pathCoords.length - 2; i++) {
+        // simpele check: zelfde punt (voor echt kruisen heb je line intersection lib nodig)
+        if (pathCoords[i][0] === newPoint[0] && pathCoords[i][1] === newPoint[1]) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Locatie ophalen en pad bijwerken
+    function trackLocation() {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const { latitude, longitude } = pos.coords;
+        const newPoint = [latitude, longitude];
+        if (!intersectsPath(newPoint)) {
+          pathCoords.push(newPoint);
+          if (pathLine) map.removeLayer(pathLine);
+          pathLine = L.polyline(pathCoords, { color: 'green' }).addTo(map);
+          map.setView(newPoint, 17);
+        } else {
+          alert("Game Over! Je hebt je eigen pad geraakt.");
+        }
+      });
+    }
+
+    // Start game loop
+    generateFood();
+    setInterval(trackLocation, stepTime);
+  </script>
+</body>
+</html>
