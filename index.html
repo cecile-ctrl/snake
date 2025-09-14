@@ -51,8 +51,8 @@
 
     #map { height: 100vh; display: none; }
 
-    /* ✅ Scorebox rechtsonder vast */
-    #score {
+    /* ✅ Scorebox + afstand rechtsonder vast */
+    #hud {
       position: fixed;
       bottom: 10px;
       right: 10px;
@@ -101,12 +101,16 @@
   <div id="gameOverScreen" style="display:none;">
     <h1>Game Over!</h1>
     <p id="finalScore">Score: 0</p>
+    <p id="finalDistance">Afstand: 0 m</p>
     <button id="restartBtn">Opnieuw starten</button>
   </div>
 
   <!-- Spel -->
   <div id="map"></div>
-  <div id="score">Score: 0</div>
+  <div id="hud">
+    <div id="score">Score: 0</div>
+    <div id="distance">Afstand: 0 m</div>
+  </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
@@ -115,6 +119,7 @@
     let playerCircle = null;
     const stepTime = 5000;
     let gameInterval = null;
+    const minDistanceBeforeGameOver = 100; // ✅ pas na 100m kan je verliezen
 
     function resetGame() {
       pathCoords = [];
@@ -125,12 +130,13 @@
       center = null;
       score = 0;
       maxPathLength = 500;
-      updateScore();
+      updateHUD();
     }
 
-    // ---- Score bijwerken ----
-    function updateScore() {
+    // ---- HUD bijwerken ----
+    function updateHUD() {
       document.getElementById("score").innerText = "Score: " + score;
+      document.getElementById("distance").innerText = "Afstand: " + Math.round(getPathLength(pathCoords)) + " m";
     }
 
     // ---- Wegen laden ----
@@ -177,7 +183,7 @@
 
       if (foodMarker) map.removeLayer(foodMarker);
 
-      const appleIcon = L.divIcon({ html: "🍎", className: "", iconSize: [24, 24] });
+      const appleIcon = L.divIcon({ html: "🍎", className: "", iconSize: [36, 36] });
       foodMarker = L.marker(point, { icon: appleIcon }).addTo(map);
       foodCoords = point;
     }
@@ -220,6 +226,7 @@
     function gameOver() {
       clearInterval(gameInterval);
       document.getElementById("finalScore").innerText = "Score: " + score;
+      document.getElementById("finalDistance").innerText = "Afstand: " + Math.round(getPathLength(pathCoords)) + " m";
       document.getElementById("gameOverScreen").style.display = "flex";
     }
 
@@ -255,14 +262,18 @@
             const d = getDistance(latitude, longitude, foodCoords[0], foodCoords[1]);
             if (d < 10) {
               score++;
-              updateScore();
               maxPathLength += 500;
               generateFood();
             }
           }
         } else {
-          gameOver();
+          // ✅ Alleen game over als je meer dan 100m hebt gelopen
+          if (getPathLength(pathCoords) > minDistanceBeforeGameOver) {
+            gameOver();
+          }
         }
+
+        updateHUD();
       }, err => {
         console.error("GPS fout:", err);
       });
@@ -272,7 +283,7 @@
     document.getElementById("startBtn").addEventListener("click", () => {
       document.getElementById("startScreen").style.display = "none";
       document.getElementById("map").style.display = "block";
-      document.getElementById("score").style.display = "block";
+      document.getElementById("hud").style.display = "block";
 
       map = L.map('map').setView([52.3702, 4.8952], 15);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
@@ -295,6 +306,7 @@
   </script>
 </body>
 </html>
+
 
 
 
