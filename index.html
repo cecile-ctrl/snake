@@ -115,7 +115,7 @@
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    let map, pathCoords, pathLine, foodMarker, foodCoords, roads, center, score, maxPathLength;
+    let map, pathCoords, rawPathCoords, pathLine, foodMarker, foodCoords, roads, center, score, maxPathLength;
     let playerMarker = null;
     let playerCircle = null;
     let highscore = localStorage.getItem("highscore") || 0;
@@ -123,8 +123,14 @@
     let gameInterval = null;
     const minDistanceBeforeGameOver = 100; // ✅ pas na 100m kan je verliezen
 
+    // Smoothing parameters
+    let smoothingFactor = 0.3;
+    let minDistance = 3; // meters
+    let lastSmoothedPoint = null;
+
     function resetGame() {
       pathCoords = [];
+      rawPathCoords = [];
       pathLine = null;
       foodMarker = null;
       foodCoords = null;
@@ -140,6 +146,117 @@
       document.getElementById("score").innerText = "Score: " + score;
       document.getElementById("distance").innerText = "Afstand: " + Math.round(getPathLength(pathCoords)) + " m";
       document.getElementById("highscore").innerText = "Highscore: " + highscore;
+    }
+
+    // Kalman-like filter for GPS smoothing
+    function kalmanFilter(coords, factor = 0.3) {
+      if (coords.length < 2) return coords;
+
+      const filtered = [coords[0]];
+
+      for (let i = 1; i < coords.length; i++) {
+        const prev = filtered[i - 1];
+        const curr = coords[i];
+
+        // Simple Kalman-like smoothing
+        const smoothed = [
+          prev[0] + factor * (curr[0] - prev[0]),
+          prev[1] + factor * (curr[1] - prev[1])
+        ];
+
+        filtered.push(smoothed);
+      }
+
+      return filtered;
+    }
+
+    // Bezier curve smoothing
+    function bezierSmooth(coords) {
+      if (coords.length < 3) return coords;
+
+      const smoothed = [];
+
+      for (let i = 0; i < coords.length - 2; i++) {
+        const p0 = coords[i];
+        const p1 = coords[i + 1];
+        const p2 = coords[i + 2];
+
+        // Add original point
+        smoothed.push(p1);
+
+        // Add bezier interpolated points
+        for (let t = 0.2; t <= 0.8; t += 0.2) {
+          const x = (1 - t) * (1 - t) * p0[0] + 2 * (1 - t) * t * p1[0] + t * t * p2[0];
+          const y = (1 - t) * (1 - t) * p0[1] + 2 * (1 - t) * t * p1[1] + t * t * p2[1];
+          smoothed.push([x, y]);
+        }
+      }
+
+      // Add last point
+      if (coords.length > 0) {
+        smoothed.push(coords[coords.length - 1]);
+      }
+
+      return smoothed;
+    }
+
+    // Moving average smoothing
+    function movingAverageSmooth(coords, windowSize = 3) {
+      if (coords.length < windowSize) return coords;
+
+      const smoothed = [];
+
+      for (let i = 0; i < coords.length; i++) {
+        const start = Math.max(0, i - Math.floor(windowSize / 2));
+        const end = Math.min(coords.length, start + windowSize);
+
+        let sumLat = 0, sumLon = 0;
+        let count = 0;
+
+        for (let j = start; j < end; j++) {
+          sumLat += coords[j][0];
+          sumLon += coords[j][1];
+          count++;
+        }
+
+        smoothed.push([sumLat / count, sumLon / count]);
+      }
+
+      return smoothed;
+    }
+
+    // Remove points that are too close together
+    function decimatePoints(coords, minDist = 3) {
+      if (coords.length < 2) return coords;
+
+      const filtered = [coords[0]];
+
+      for (let i = 1; i < coords.length; i++) {
+        const last = filtered[filtered.length - 1];
+        const dist = getDistance(last[0], last[1], coords[i][0], coords[i][1]);
+
+        if (dist >= minDist) {
+          filtered.push(coords[i]);
+        }
+      }
+
+      return filtered;
+    }
+
+    // Combined smoothing function
+    function smoothPath(coords) {
+      if (coords.length < 2) return coords;
+
+      // Step 1: Remove points too close together
+      let smoothed = decimatePoints(coords, minDistance);
+
+      // Step 2: Apply Kalman-like filter
+      smoothed = kalmanFilter(smoothed, smoothingFactor);
+
+      // Step 3: Apply moving average for final smoothing
+      smoothed = movingAverageSmooth(smoothed, 3);
+
+      return smoothed;
     }
 
     // ---- Wegen laden ----
@@ -262,6 +379,17 @@
       document.getElementById("gameOverScreen").style.display = "flex";
     }
 
+    function updatePath() {
+      pathCoords = smoothPath(rawPathCoords);
+
+      if (pathLine) map.removeLayer(pathLine);
+      pathLine = L.polyline(pathCoords, {
+        color: 'green',
+        weight: 4,
+        smoothFactor: 1.0 // Leaflet's built-in smoothing
+      }).addTo(map);
+    }
+
     function trackLocation() {
       navigator.geolocation.getCurrentPosition(async pos => {
         const { latitude, longitude, accuracy } = pos.coords;
@@ -280,12 +408,14 @@
         playerMarker = L.marker(newPoint, { icon: bluePinIcon }).addTo(map);
         playerCircle = L.circle(newPoint, { radius: accuracy, color: "blue", opacity: 0.3 }).addTo(map);
 
-        if (!intersectsPath(newPoint)) {
-          pathCoords.push(newPoint);
-          trimPath();
+        rawPathCoords.push(newPoint);
+        const tempSmoothed = smoothPath(rawPathCoords);
+        const smoothedNewPoint = tempSmoothed[tempSmoothed.length - 1];
 
-          if (pathLine) map.removeLayer(pathLine);
-          pathLine = L.polyline(pathCoords, { color: 'green' }).addTo(map);
+        if (!intersectsPath(smoothedNewPoint)) {
+          pathCoords = smoothedNewPoint;
+          trimPath();
+          updatePath();
           map.setView(newPoint, 17);
 
           if (foodCoords) {
@@ -329,8 +459,8 @@
       document.getElementById("gameOverScreen").style.display = "none";
       resetGame();
       if (map) {
-        map.eachLayer(layer => { 
-          if (layer instanceof L.Polyline || layer instanceof L.Marker || layer instanceof L.Circle) map.removeLayer(layer); 
+        map.eachLayer(layer => {
+          if (layer instanceof L.Polyline || layer instanceof L.Marker || layer instanceof L.Circle) map.removeLayer(layer);
         });
       }
       updateHUD();
