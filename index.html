@@ -161,19 +161,33 @@
       }
     }
 
-    function randomPointOnRoad() {
+    // ---- Willekeurig punt op weg, binnen 500m ----
+    function randomPointOnRoad(maxRadius = 500) {
       if (roads.length === 0) return null;
-      const road = roads[Math.floor(Math.random() * roads.length)];
-      const nodes = road.geometry;
-      if (nodes.length < 2) return null;
-      const idx = Math.floor(Math.random() * (nodes.length - 1));
-      const a = nodes[idx], b = nodes[idx+1];
-      const t = Math.random();
-      return [a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon)];
+
+      for (let tries = 0; tries < 50; tries++) { // probeer max 50 keer iets te vinden
+        const road = roads[Math.floor(Math.random() * roads.length)];
+        const nodes = road.geometry;
+        if (nodes.length < 2) continue;
+
+        const idx = Math.floor(Math.random() * (nodes.length - 1));
+        const a = nodes[idx], b = nodes[idx+1];
+        const t = Math.random();
+        const point = [a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon)];
+
+        // check afstand tot startpositie
+        if (center) {
+          const d = getDistance(center[0], center[1], point[0], point[1]);
+          if (d <= maxRadius) {
+            return point; // ✅ geldig punt gevonden
+          }
+        }
+      }
+      return null; // geen geldig punt
     }
 
     function generateFood() {
-      const point = randomPointOnRoad();
+      const point = randomPointOnRoad(500); // max 500m
       if (!point) return;
 
       if (foodMarker) map.removeLayer(foodMarker);
@@ -325,6 +339,7 @@
   </script>
 </body>
 </html>
+
 
 
 
