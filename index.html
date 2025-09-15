@@ -351,6 +351,7 @@
       let length = getPathLength(pathCoords);
       while (length > maxPathLength && pathCoords.length > 1) {
         pathCoords.shift();
+        rawPathCoords.shift();
         length = getPathLength(pathCoords);
       }
     }
@@ -358,9 +359,10 @@
     function intersectsPath(newPoint) {
       if (pathCoords.length < 2) return false;
       for (let i = 0; i < pathCoords.length - 2; i++) {
-        if (pathCoords[i][0] === newPoint[0] && pathCoords[i][1] === newPoint[1]) {
-          return true;
-        }
+        const dist = getDistance(pathCoords[i][0], pathCoords[i][1], newPoint[0], newPoint[1]);
+         if (dist < 5) { // 5 meter collision threshold
+           return true;
+         }
       }
       return false;
     }
@@ -413,9 +415,8 @@
         const smoothedNewPoint = tempSmoothed[tempSmoothed.length - 1];
 
         if (!intersectsPath(smoothedNewPoint)) {
-          pathCoords = smoothedNewPoint;
-          trimPath();
           updatePath();
+          trimPath();
           map.setView(newPoint, 17);
 
           if (foodCoords) {
