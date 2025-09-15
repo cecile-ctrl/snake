@@ -51,7 +51,7 @@
 
     #map { height: 100vh; display: none; }
 
-    /* ✅ Scorebox + afstand rechtsonder vast */
+    /* ✅ HUD rechtsonder */
     #hud {
       position: fixed;
       bottom: 10px;
@@ -63,7 +63,7 @@
       font-size: 16px;
       font-weight: bold;
       z-index: 1000;
-      display: none; /* pas zichtbaar na start */
+      display: none;
     }
 
     /* 🔵 Blauwe pin zoals Google Maps */
@@ -110,6 +110,7 @@
   <div id="hud">
     <div id="score">Score: 0</div>
     <div id="distance">Afstand: 0 m</div>
+    <div id="highscore">Highscore: 0</div>
   </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -117,6 +118,7 @@
     let map, pathCoords, pathLine, foodMarker, foodCoords, roads, center, score, maxPathLength;
     let playerMarker = null;
     let playerCircle = null;
+    let highscore = localStorage.getItem("highscore") || 0;
     const stepTime = 5000;
     let gameInterval = null;
     const minDistanceBeforeGameOver = 100; // ✅ pas na 100m kan je verliezen
@@ -137,13 +139,14 @@
     function updateHUD() {
       document.getElementById("score").innerText = "Score: " + score;
       document.getElementById("distance").innerText = "Afstand: " + Math.round(getPathLength(pathCoords)) + " m";
+      document.getElementById("highscore").innerText = "Highscore: " + highscore;
     }
 
     // ---- Wegen laden ----
     async function loadRoads(center, radius=500) {
       const query = `
         [out:json];
-        way["highway"]["highway"!="motorway"]["highway"!="trunk"]
+        way["highway"]["highway"!="motorway"]["highway"!="trunk"]["access"!="private"]["access"!="no"]
           (around:${radius},${center[0]},${center[1]});
         out geom;
       `;
@@ -169,23 +172,31 @@
       return [a.lat + t * (b.lat - a.lat), a.lon + t * (b.lon - a.lon)];
     }
 
-    function randomPointFallback() {
-      if (!center) return null;
-      const lat = center[0] + (Math.random() - 0.5) * 0.018;
-      const lon = center[1] + (Math.random() - 0.5) * 0.028;
-      return [lat, lon];
-    }
-
     function generateFood() {
-      let point = randomPointOnRoad();
-      if (!point) point = randomPointFallback();
+      const point = randomPointOnRoad();
       if (!point) return;
 
       if (foodMarker) map.removeLayer(foodMarker);
 
-      const appleIcon = L.divIcon({ html: "🍎", className: "", iconSize: [36, 36] });
+      const appleIcon = L.divIcon({
+        html: "🍎",
+        className: "",
+        iconSize: [24, 24]
+      });
+
       foodMarker = L.marker(point, { icon: appleIcon }).addTo(map);
       foodCoords = point;
+
+      // 📌 Klik op appel → toon afstand tot speler
+      foodMarker.on("click", () => {
+        if (!pathCoords.length) {
+          foodMarker.bindPopup("Nog geen locatie bekend!").openPopup();
+          return;
+        }
+        const me = pathCoords[pathCoords.length - 1];
+        const d = getDistance(me[0], me[1], foodCoords[0], foodCoords[1]);
+        foodMarker.bindPopup(`Afstand: ${(d/1000).toFixed(2)} km`).openPopup();
+      });
     }
 
     function getDistance(lat1, lon1, lat2, lon2) {
@@ -225,6 +236,13 @@
 
     function gameOver() {
       clearInterval(gameInterval);
+
+      // ✅ Highscore check
+      if (score > highscore) {
+        highscore = score;
+        localStorage.setItem("highscore", highscore);
+      }
+
       document.getElementById("finalScore").innerText = "Score: " + score;
       document.getElementById("finalDistance").innerText = "Afstand: " + Math.round(getPathLength(pathCoords)) + " m";
       document.getElementById("gameOverScreen").style.display = "flex";
@@ -241,7 +259,6 @@
           generateFood();
         }
 
-        // ---- Eigen locatie marker (blauwe pin + cirkel nauwkeurigheid) ----
         if (playerMarker) map.removeLayer(playerMarker);
         if (playerCircle) map.removeLayer(playerCircle);
 
@@ -249,7 +266,6 @@
         playerMarker = L.marker(newPoint, { icon: bluePinIcon }).addTo(map);
         playerCircle = L.circle(newPoint, { radius: accuracy, color: "blue", opacity: 0.3 }).addTo(map);
 
-        // ---- Pad tekenen ----
         if (!intersectsPath(newPoint)) {
           pathCoords.push(newPoint);
           trimPath();
@@ -262,12 +278,15 @@
             const d = getDistance(latitude, longitude, foodCoords[0], foodCoords[1]);
             if (d < 10) {
               score++;
+              if (score > highscore) {
+                highscore = score;
+                localStorage.setItem("highscore", highscore);
+              }
               maxPathLength += 500;
               generateFood();
             }
           }
         } else {
-          // ✅ Alleen game over als je meer dan 100m hebt gelopen
           if (getPathLength(pathCoords) > minDistanceBeforeGameOver) {
             gameOver();
           }
@@ -279,7 +298,6 @@
       });
     }
 
-    // ---- Startknop ----
     document.getElementById("startBtn").addEventListener("click", () => {
       document.getElementById("startScreen").style.display = "none";
       document.getElementById("map").style.display = "block";
@@ -289,10 +307,10 @@
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
       resetGame();
+      updateHUD();
       gameInterval = setInterval(trackLocation, stepTime);
     });
 
-    // ---- Restartknop ----
     document.getElementById("restartBtn").addEventListener("click", () => {
       document.getElementById("gameOverScreen").style.display = "none";
       resetGame();
@@ -301,11 +319,13 @@
           if (layer instanceof L.Polyline || layer instanceof L.Marker || layer instanceof L.Circle) map.removeLayer(layer); 
         });
       }
+      updateHUD();
       gameInterval = setInterval(trackLocation, stepTime);
     });
   </script>
 </body>
 </html>
+
 
 
 
